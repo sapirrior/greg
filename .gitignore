@@ -1,0 +1,8 @@
+overview.md
+*.o
+test-*.o
+bin/
+obj/
+.env
+greg
+core
