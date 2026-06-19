@@ -15,9 +15,6 @@ typedef struct {
 int greg_printer_init(greg_printer_t *printer, int color_enabled, int show_line_numbers, int files_with_matches);
 void greg_printer_destroy(greg_printer_t *printer);
 
-// Prints a matched line with color highlighting for the match portion
-void greg_printer_print_match(greg_printer_t *printer, const char *filepath, size_t line_num, const char *line, size_t line_len, size_t match_start, size_t match_end);
-
 // Prints only the file name
 void greg_printer_print_file(greg_printer_t *printer, const char *filepath);
 

@@ -92,7 +92,7 @@ int greg_file_map(const char *filepath, greg_file_view_t *view) {
     view->size = 0;
     view->is_mmap = 0;
 
-    int fd = open(filepath, O_RDONLY);
+    int fd = open(filepath, O_RDONLY | O_CLOEXEC);
     if (fd < 0) return -1;
 
     struct stat sb;

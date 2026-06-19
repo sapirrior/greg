@@ -11,6 +11,12 @@ typedef struct {
     int invert_match;     // -v
     int fixed_strings;    // -F
     int heading;          // --heading
+    int raw;              // --raw
+    int count_only;       // -c, --count
+    int max_count;        // -m, --max-count
+    int no_ignore;        // --no-ignore
+    int follow_links;     // --follow
+    int hidden;           // --hidden
     const char *pattern;
 } greg_options_t;
 

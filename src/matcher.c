@@ -38,6 +38,8 @@ int greg_matcher_init(greg_matcher_t *matcher, const greg_options_t *opts) {
         options |= PCRE2_LITERAL;
     }
 
+    options |= PCRE2_MULTILINE;
+
     matcher->code = pcre2_compile(
         (PCRE2_SPTR)opts->pattern,
         PCRE2_ZERO_TERMINATED,

@@ -58,15 +58,13 @@ console.log(`🚀 Starting benchmark for "${pattern}" in ${targetDir}`);
 // tools
 const rg = `rg "${pattern}" "${targetDir}"`;
 const greg = `./greg "${pattern}" "${targetDir}"`;
-const grep = `grep -r "${pattern}" "${targetDir}"`;
 
 // run benchmarks
 const rgRes = benchmark("ripgrep (rg)", rg);
 const gregRes = benchmark("greg", greg);
-const grepRes = benchmark("grep (traditional)", grep);
 
 // compare by median (more stable than single run)
-const results = [rgRes, gregRes, grepRes].sort((a, b) => a.median - b.median);
+const results = [rgRes, gregRes].sort((a, b) => a.median - b.median);
 
 console.log(`\n🏁 FINAL RANKING (by median):`);
 results.forEach((r, i) => {

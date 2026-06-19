@@ -50,7 +50,8 @@ static void pool_work_func(const char *filepath, pcre2_match_data *match_data, v
 }
 
 static void print_usage(const char *prog) {
-    printf("greg %s: A modern, high-performance text search utility in C.\n\n", GREG_VERSION);
+    printf("greg %s — Search Like Flash ⚡\n", GREG_VERSION);
+    printf("A modern, high-performance text search utility in C.\n\n");
     printf("Usage:\n");
     printf("  %s [options] <pattern> [path]\n\n", prog);
     printf("Options:\n");
@@ -61,13 +62,23 @@ static void print_usage(const char *prog) {
     printf("  -n, --line-number          Always show line numbers (default if outputting to terminal).\n");
     printf("  -N, --no-line-number       Never show line numbers.\n");
     printf("  -l, --files-with-matches   Only print filenames of files containing matches.\n");
+    printf("  -c, --count                Only print a count of matching lines per file.\n");
+    printf("  -m, --max-count <num>      Stop searching in a file after <num> matches.\n");
     printf("  -j, --threads <num>        Number of threads to use (default: CPU core count, max %d).\n", GREG_MAX_THREADS);
     printf("  -a, --text                 Search binary files (do not skip them).\n");
+    printf("      --raw                  Print matches in raw machine-readable format.\n");
+    printf("      --no-ignore            Do not respect ignore files (.gitignore, .ignore, etc.).\n");
+    printf("      --follow               Follow symbolic links when traversing directories.\n");
+    printf("      --hidden               Search hidden files and directories.\n");
     printf("      --heading              Group matches by file name (default on terminal).\n");
     printf("      --no-heading           Disable grouped matches.\n");
     printf("      --color <always|never> Control output coloring.\n");
     printf("  -h, --help                 Print this help message.\n");
     printf("      --version              Print version information and exit.\n");
+}
+
+static void print_hint(const char *prog) {
+    fprintf(stderr, "Try '%s --help' for more information.\n", prog);
 }
 
 // Parses a positive integer thread count argument. Returns 0 and writes to
@@ -79,6 +90,17 @@ static int parse_thread_count(const char *arg, int *out) {
     long val = strtol(arg, &endptr, 10);
     if (endptr == arg || *endptr != '\0' || val < 1 || val > GREG_MAX_THREADS) {
         fprintf(stderr, "greg: error: --threads expects an integer between 1 and %d, got '%s'\n", GREG_MAX_THREADS, arg);
+        return -1;
+    }
+    *out = (int)val;
+    return 0;
+}
+
+static int parse_max_count(const char *arg, int *out) {
+    char *endptr = NULL;
+    long val = strtol(arg, &endptr, 10);
+    if (endptr == arg || *endptr != '\0' || val < 1) {
+        fprintf(stderr, "greg: error: --max-count expects a positive integer, got '%s'\n", arg);
         return -1;
     }
     *out = (int)val;
@@ -106,6 +128,12 @@ int main(int argc, char **argv) {
     opts.color_enabled = is_terminal_stdout();
     opts.files_with_matches = 0;
     opts.search_binary = 0;
+    opts.raw = 0;
+    opts.count_only = 0;
+    opts.max_count = 0;
+    opts.no_ignore = 0;
+    opts.follow_links = 0;
+    opts.hidden = 0;
     opts.pattern = NULL;
 
     const char *search_path = ".";
@@ -134,15 +162,40 @@ int main(int argc, char **argv) {
                 opts.show_line_numbers = 0;
             } else if (strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "--files-with-matches") == 0) {
                 opts.files_with_matches = 1;
-            } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--text") == 0) {
-                opts.search_binary = 1;
-            } else if (strcmp(argv[i], "-j") == 0 || strcmp(argv[i], "--threads") == 0) {
+            } else if (strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--count") == 0) {
+                opts.count_only = 1;
+            } else if (strcmp(argv[i], "-m") == 0 || strcmp(argv[i], "--max-count") == 0) {
                 if (i + 1 < argc) {
-                    if (parse_thread_count(argv[++i], &num_threads) != 0) {
+                    if (parse_max_count(argv[++i], &opts.max_count) != 0) {
+                        print_hint(argv[0]);
                         return 1;
                     }
                 } else {
-                    fprintf(stderr, "Error: --threads option requires an argument.\n");
+                    fprintf(stderr, "greg: error: --max-count option requires an argument.\n");
+                    print_hint(argv[0]);
+                    return 1;
+                }
+            } else if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--text") == 0) {
+                opts.search_binary = 1;
+            } else if (strcmp(argv[i], "--raw") == 0) {
+                opts.raw = 1;
+                opts.color_enabled = 0;
+                opts.heading = 0;
+            } else if (strcmp(argv[i], "--no-ignore") == 0) {
+                opts.no_ignore = 1;
+            } else if (strcmp(argv[i], "--follow") == 0) {
+                opts.follow_links = 1;
+            } else if (strcmp(argv[i], "--hidden") == 0) {
+                opts.hidden = 1;
+            } else if (strcmp(argv[i], "-j") == 0 || strcmp(argv[i], "--threads") == 0) {
+                if (i + 1 < argc) {
+                    if (parse_thread_count(argv[++i], &num_threads) != 0) {
+                        print_hint(argv[0]);
+                        return 1;
+                    }
+                } else {
+                    fprintf(stderr, "greg: error: --threads option requires an argument.\n");
+                    print_hint(argv[0]);
                     return 1;
                 }
             } else if (strcmp(argv[i], "--color") == 0) {
@@ -151,11 +204,13 @@ int main(int argc, char **argv) {
                     if (strcmp(color_opt, "always") == 0) opts.color_enabled = 1;
                     else if (strcmp(color_opt, "never") == 0) opts.color_enabled = 0;
                     else {
-                        fprintf(stderr, "Error: --color expects 'always' or 'never', got '%s'.\n", color_opt);
+                        fprintf(stderr, "greg: error: --color expects 'always' or 'never', got '%s'.\n", color_opt);
+                        print_hint(argv[0]);
                         return 1;
                     }
                 } else {
-                    fprintf(stderr, "Error: --color option requires an argument (always|never).\n");
+                    fprintf(stderr, "greg: error: --color option requires an argument (always|never).\n");
+                    print_hint(argv[0]);
                     return 1;
                 }
             } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -165,8 +220,8 @@ int main(int argc, char **argv) {
                 printf("greg %s\n", GREG_VERSION);
                 return 0;
             } else {
-                fprintf(stderr, "Unknown option: %s\n", argv[i]);
-                print_usage(argv[0]);
+                fprintf(stderr, "greg: error: unknown option: %s\n", argv[i]);
+                print_hint(argv[0]);
                 return 1;
             }
         } else {
@@ -177,15 +232,16 @@ int main(int argc, char **argv) {
                 search_path = argv[i];
                 parsed_positionals++;
             } else {
-                fprintf(stderr, "Error: Too many positional arguments.\n");
-                print_usage(argv[0]);
+                fprintf(stderr, "greg: error: too many positional arguments.\n");
+                print_hint(argv[0]);
                 return 1;
             }
         }
     }
 
     if (opts.pattern == NULL) {
-        print_usage(argv[0]);
+        fprintf(stderr, "greg: error: pattern is required.\n");
+        print_hint(argv[0]);
         return 1;
     }
 
@@ -223,18 +279,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // 5. Start walking directory in main thread (producer)
+    // 5. Start walking directory by enqueuing the root item
     int walk_rc = greg_walk_directory(search_path, &queue, &opts);
     if (walk_rc != 0) {
-        fprintf(stderr, "Error traversing path: %s\n", search_path);
+        fprintf(stderr, "greg: error: traversing path failed: %s\n", search_path);
+        greg_queue_deactivate(&queue);
     }
 
-    // 6. Signal completion to workers
-    greg_queue_deactivate(&queue);
-
-    // 7. Join worker threads and clean up
-    greg_pool_join(&pool);
-    greg_pool_destroy(&pool);
+    // 6. Join worker threads and clean up
+    greg_pool_wait_and_destroy(&pool);
     greg_queue_destroy(&queue);
 
     size_t total_matches = printer.match_count;
