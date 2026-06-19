@@ -1,34 +1,81 @@
 const { execSync } = require('child_process');
-const path = require('path');
+const os = require('os');
 
 const pattern = 'ls';
-const targetDir = require('os').homedir(); // Test in user home directory (~/)
+const targetDir = os.homedir();
 
-function benchmark(command, name) {
-    console.log(`Running: ${name}...`);
+// how many times we repeat each tool
+const WARMUP_RUNS = 3;
+const BENCH_RUNS = 10;
+
+function runCommand(command) {
     const start = process.hrtime.bigint();
+
     try {
         execSync(command, { stdio: 'ignore' });
     } catch (e) {
-        // If no matches are found, it might return exit code 1
+        // ignore non-zero exit codes (no matches etc.)
     }
+
     const end = process.hrtime.bigint();
-    const ms = Number(end - start) / 1_000_000;
-    console.log(`${name} completed in: ${ms.toFixed(2)} ms\n`);
-    return ms;
+    return Number(end - start) / 1_000_000; // ms
 }
 
-console.log(`Starting benchmark for pattern "${pattern}" in "${targetDir}"...\n`);
+function benchmark(name, command) {
+    console.log(`\n🔥 Benchmarking ${name}`);
 
-const rgCommand = `rg "${pattern}" "${targetDir}"`;
-const gregCommand = `./greg "${pattern}" "${targetDir}"`;
+    // warmup phase (IMPORTANT for cache + JIT + disk)
+    for (let i = 0; i < WARMUP_RUNS; i++) {
+        runCommand(command);
+    }
 
-const rgTime = benchmark(rgCommand, 'ripgrep (rg)');
-const gregTime = benchmark(gregCommand, 'greg');
+    const times = [];
 
-const diff = gregTime - rgTime;
-if (diff > 0) {
-    console.log(`ripgrep is faster by ${(diff).toFixed(2)} ms (${(gregTime / rgTime).toFixed(2)}x)`);
-} else {
-    console.log(`greg is faster by ${(-diff).toFixed(2)} ms (${(rgTime / gregTime).toFixed(2)}x)`);
+    for (let i = 0; i < BENCH_RUNS; i++) {
+        const t = runCommand(command);
+        times.push(t);
+        console.log(`  run ${i + 1}: ${t.toFixed(2)} ms`);
+    }
+
+    times.sort((a, b) => a - b);
+
+    const min = times[0];
+    const max = times[times.length - 1];
+    const median = times[Math.floor(times.length / 2)];
+    const avg = times.reduce((a, b) => a + b, 0) / times.length;
+
+    console.log(`\n📊 ${name} summary:`);
+    console.log(`  min    : ${min.toFixed(2)} ms`);
+    console.log(`  max    : ${max.toFixed(2)} ms`);
+    console.log(`  avg    : ${avg.toFixed(2)} ms`);
+    console.log(`  median : ${median.toFixed(2)} ms`);
+
+    return { name, median, avg };
+}
+
+console.log(`🚀 Starting benchmark for "${pattern}" in ${targetDir}`);
+
+// tools
+const rg = `rg "${pattern}" "${targetDir}"`;
+const greg = `./greg "${pattern}" "${targetDir}"`;
+const grep = `grep -r "${pattern}" "${targetDir}"`;
+
+// run benchmarks
+const rgRes = benchmark("ripgrep (rg)", rg);
+const gregRes = benchmark("greg", greg);
+const grepRes = benchmark("grep (traditional)", grep);
+
+// compare by median (more stable than single run)
+const results = [rgRes, gregRes, grepRes].sort((a, b) => a.median - b.median);
+
+console.log(`\n🏁 FINAL RANKING (by median):`);
+results.forEach((r, i) => {
+    console.log(`${i + 1}. ${r.name} → ${r.median.toFixed(2)} ms`);
+});
+
+console.log(`\n⚖️ Differences vs fastest:`);
+const fastest = results[0];
+for (const r of results) {
+    const diff = r.median - fastest.median;
+    console.log(`- ${r.name}: +${diff.toFixed(2)} ms`);
 }
