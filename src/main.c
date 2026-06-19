@@ -50,8 +50,7 @@ static void pool_work_func(const char *filepath, pcre2_match_data *match_data, v
 }
 
 static void print_usage(const char *prog) {
-    printf("greg %s — Search Like Flash ⚡\n", GREG_VERSION);
-    printf("A modern, high-performance text search utility in C.\n\n");
+    printf("greg %s\n\n", GREG_VERSION);
     printf("Usage:\n");
     printf("  %s [options] <pattern> [path]\n\n", prog);
     printf("Options:\n");

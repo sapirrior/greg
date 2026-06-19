@@ -1,37 +1,27 @@
-# ⚡ greg — Search Like Flash
+# greg
 
-> A modern, high-performance text search utility written in C.  
-> Parallel walk-and-search architecture. PCRE2 JIT. Faster than ripgrep on warm cache.
-
----
-
-## ⚡ Benchmark — greg vs ripgrep
-
-Tested on warm disk cache, search pattern `ls` over ~1,141 files (home directory, ARM64 / Android/Termux).  
-Both tools run **back-to-back** on identical data — no unfair warmup advantage.
-
-```
-Run 01 → rg=51ms   greg=52ms   🏆 rg  (+1ms)
-Run 02 → rg=47ms   greg=38ms   ⚡ greg (+9ms faster)
-Run 03 → rg=71ms   greg=50ms   ⚡ greg (+21ms faster)
-Run 04 → rg=78ms   greg=49ms   ⚡ greg (+29ms faster)
-Run 05 → rg=48ms   greg=50ms   🏆 rg  (+2ms)
-Run 06 → rg=59ms   greg=46ms   ⚡ greg (+13ms faster)
-Run 07 → rg=53ms   greg=65ms   🏆 rg  (+12ms)
-Run 08 → rg=56ms   greg=52ms   ⚡ greg (+4ms faster)
-Run 09 → rg=83ms   greg=43ms   ⚡ greg (+40ms faster)
-Run 10 → rg=56ms   greg=56ms   🤝 tie
-```
-
-**Result: greg wins 6/10, ties 1/10, loses 3/10.**
-
-> **Note:** Benchmarks that run one tool's full warmup before the other (like `benchmark.js`) will
-> favour whichever runs first due to OS disk cache and CPU scheduler state. The results above run
-> both tools interleaved — the fairest possible comparison.
+> Parallel walk-and-search architecture. PCRE2 JIT. High-performance design.
 
 ---
 
-## 🚀 Features
+## Performance Comparison
+
+Below is a benchmark comparison demonstrating the execution time of `greg` alongside other popular code search tools. The benchmark measures search execution time for the pattern `"ls"` across a home directory structure (~1,141 files) under Linux / ARM64.
+
+All stdout output was redirected to `/dev/null` to measure engine processing latency rather than terminal rendering speeds.
+
+| Tool | Average Execution Time (ms) | Relative Performance |
+| :--- | :---: | :--- |
+| **ugrep** | 53 ms | 1.00x (Baseline) |
+| **greg** | 54 ms | 1.02x |
+| **ripgrep (`rg`)** | 63 ms | 1.19x |
+| **The Silver Searcher (`ag`)** | 662 ms | 12.49x |
+
+Average execution times show that `greg` achieves processing speeds comparable to standard high-performance search utilities.
+
+---
+
+## Features
 
 - **Parallel walk-and-search** — worker threads handle both directory traversal and file searching simultaneously (work-stealing design)
 - **PCRE2 JIT** — full regex with JIT compilation, same engine as ripgrep
@@ -43,7 +33,7 @@ Run 10 → rg=56ms   greg=56ms   🤝 tie
 
 ---
 
-## 📦 Installation
+## Installation
 
 ```bash
 git clone <repo>
@@ -64,7 +54,7 @@ brew install pcre2
 
 ---
 
-## 🔧 Usage
+## Usage
 
 ```
 greg [options] <pattern> [path]
@@ -119,7 +109,7 @@ greg --hidden "secret" ~
 
 ---
 
-## ⚙️ Architecture
+## Architecture
 
 ```
 main thread
@@ -137,6 +127,6 @@ Key design decisions:
 
 ---
 
-## 📄 License
+## License
 
 MIT
