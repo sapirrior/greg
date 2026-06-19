@@ -57,6 +57,11 @@ int greg_file_map(const char *filepath, greg_file_view_t *view) {
         return -1;
     }
 
+    // Hint the OS that we'll read this sequentially front-to-back (no random
+    // access), which improves prefetch/readahead behavior on large files.
+    WIN32_MEMORY_RANGE_ENTRY range = { addr, view->size };
+    PrefetchVirtualMemory(GetCurrentProcess(), 1, &range, 0);
+
     view->data = addr;
     view->hMap = hMap;
     view->is_mmap = 1;
@@ -80,6 +85,7 @@ void greg_file_unmap(greg_file_view_t *view) {
 #include <sys/types.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 
 int greg_file_map(const char *filepath, greg_file_view_t *view) {
     view->data = NULL;
@@ -94,6 +100,16 @@ int greg_file_map(const char *filepath, greg_file_view_t *view) {
         close(fd);
         return -1;
     }
+
+    // Skip directories and other non-regular files (sockets, FIFOs, device
+    // nodes) that may turn up if a symlink points somewhere unexpected -
+    // reading these can block or behave unpredictably.
+    if (!S_ISREG(sb.st_mode)) {
+        close(fd);
+        errno = EISDIR;
+        return -1;
+    }
+
     view->size = (size_t)sb.st_size;
 
     if (view->size == 0) {
@@ -109,24 +125,26 @@ int greg_file_map(const char *filepath, greg_file_view_t *view) {
             close(fd);
             return -1;
         }
-        
+
         ssize_t bytes_read = 0;
         size_t total_read = 0;
         while (total_read < view->size) {
             bytes_read = read(fd, (char*)view->data + total_read, view->size - total_read);
             if (bytes_read < 0) {
+                if (errno == EINTR) continue; // Interrupted by signal, retry
                 free(view->data);
                 close(fd);
                 return -1;
             }
-            if (bytes_read == 0) break; // EOF reached
-            total_read += bytes_read;
+            if (bytes_read == 0) break; // EOF reached (file shrank under us)
+            total_read += (size_t)bytes_read;
         }
         close(fd);
-        
+
         if (total_read != view->size) {
-            free(view->data);
-            return -1;
+            // File shrank between fstat() and read(); treat as a short read
+            // rather than silently scanning garbage/uninitialized memory.
+            view->size = total_read;
         }
         return 0;
     }
@@ -136,6 +154,15 @@ int greg_file_map(const char *filepath, greg_file_view_t *view) {
     close(fd);
 
     if (addr == MAP_FAILED) return -1;
+
+    // Sequential-access hint: we scan the buffer front-to-back exactly once,
+    // so let the kernel aggressively read ahead and drop pages behind us.
+#ifdef MADV_SEQUENTIAL
+    madvise(addr, view->size, MADV_SEQUENTIAL);
+#endif
+#ifdef MADV_WILLNEED
+    madvise(addr, view->size, MADV_WILLNEED);
+#endif
 
     view->data = addr;
     view->is_mmap = 1;
@@ -152,4 +179,3 @@ void greg_file_unmap(greg_file_view_t *view) {
 }
 
 #endif
-

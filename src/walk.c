@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 
 #define BATCH_MAX 64
+#define PATH_BUF_SIZE 4096
 
 typedef struct {
     char *paths[BATCH_MAX];
@@ -19,13 +20,28 @@ static void flush_batch(greg_queue_t *queue, walk_batch_t *b) {
     }
 }
 
+// Pushes filepath into a batch, taking ownership of it. Flushes the batch
+// to the queue first if full. Frees filepath on allocation failure instead
+// of leaking it.
+static void batch_add(greg_queue_t *queue, walk_batch_t *b, char *filepath) {
+    if (!filepath) return;
+    if (b->count >= BATCH_MAX) {
+        flush_batch(queue, b);
+    }
+    b->paths[b->count++] = filepath;
+}
+
 #ifdef _WIN32
 #include <windows.h>
 
 static void walk_recursive_win(const char *dirpath, greg_queue_t *queue, greg_ignore_stack_t *ignore_stack, const greg_options_t *opts, walk_batch_t *b) {
     greg_ignore_stack_push(ignore_stack, dirpath);
-    char search_path[2048];
-    snprintf(search_path, sizeof(search_path), "%s\\*", dirpath);
+    char search_path[PATH_BUF_SIZE];
+    if (snprintf(search_path, sizeof(search_path), "%s\\*", dirpath) >= (int)sizeof(search_path)) {
+        fprintf(stderr, "greg: warning: path too long, skipping: %s\n", dirpath);
+        greg_ignore_stack_pop(ignore_stack);
+        return;
+    }
 
     WIN32_FIND_DATAA find_data;
     HANDLE hFind = FindFirstFileA(search_path, &find_data);
@@ -39,8 +55,13 @@ static void walk_recursive_win(const char *dirpath, greg_queue_t *queue, greg_ig
             continue;
         }
 
-        char full_path[2048];
-        snprintf(full_path, sizeof(full_path), "%s\\%s", dirpath, find_data.cFileName);
+        char full_path[PATH_BUF_SIZE];
+        int n = snprintf(full_path, sizeof(full_path), "%s\\%s", dirpath, find_data.cFileName);
+        if (n < 0 || (size_t)n >= sizeof(full_path)) {
+            fprintf(stderr, "greg: warning: path too long, skipping: %s\\%s\n", dirpath, find_data.cFileName);
+            continue;
+        }
+
         int is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
         if (greg_ignore_stack_should_ignore(ignore_stack, full_path, is_dir)) {
             continue;
@@ -49,8 +70,7 @@ static void walk_recursive_win(const char *dirpath, greg_queue_t *queue, greg_ig
         if (is_dir) {
             walk_recursive_win(full_path, queue, ignore_stack, opts, b);
         } else {
-            b->paths[b->count++] = strdup(full_path);
-            if (b->count >= BATCH_MAX) flush_batch(queue, b);
+            batch_add(queue, b, strdup(full_path));
         }
     } while (FindNextFileA(hFind, &find_data));
 
@@ -61,11 +81,12 @@ static void walk_recursive_win(const char *dirpath, greg_queue_t *queue, greg_ig
 int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_options_t *opts) {
     greg_ignore_stack_t ignore_stack;
     greg_ignore_stack_init(&ignore_stack);
-    
+
     walk_batch_t b = {0};
 
     DWORD attrs = GetFileAttributesA(root_path);
     if (attrs == INVALID_FILE_ATTRIBUTES) {
+        fprintf(stderr, "greg: error: cannot access path: %s\n", root_path);
         greg_ignore_stack_destroy(&ignore_stack);
         return -1;
     }
@@ -74,7 +95,7 @@ int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_o
         walk_recursive_win(root_path, queue, &ignore_stack, opts, &b);
     } else {
         if (!greg_ignore_stack_should_ignore(&ignore_stack, root_path, 0)) {
-            b.paths[b.count++] = strdup(root_path);
+            batch_add(queue, &b, strdup(root_path));
         }
     }
 
@@ -91,6 +112,8 @@ static void walk_recursive_posix(const char *dirpath, greg_queue_t *queue, greg_
     greg_ignore_stack_push(ignore_stack, dirpath);
     DIR *dir = opendir(dirpath);
     if (!dir) {
+        // Likely permission denied or a broken symlink target - skip and
+        // keep walking rather than aborting the whole search.
         greg_ignore_stack_pop(ignore_stack);
         return;
     }
@@ -101,8 +124,12 @@ static void walk_recursive_posix(const char *dirpath, greg_queue_t *queue, greg_
             continue;
         }
 
-        char full_path[2048];
-        snprintf(full_path, sizeof(full_path), "%s/%s", dirpath, entry->d_name);
+        char full_path[PATH_BUF_SIZE];
+        int n = snprintf(full_path, sizeof(full_path), "%s/%s", dirpath, entry->d_name);
+        if (n < 0 || (size_t)n >= sizeof(full_path)) {
+            fprintf(stderr, "greg: warning: path too long, skipping: %s/%s\n", dirpath, entry->d_name);
+            continue;
+        }
 
         int is_dir = 0;
 #ifdef _DIRENT_HAVE_D_TYPE
@@ -128,8 +155,7 @@ static void walk_recursive_posix(const char *dirpath, greg_queue_t *queue, greg_
         if (is_dir) {
             walk_recursive_posix(full_path, queue, ignore_stack, opts, b);
         } else {
-            b->paths[b->count++] = strdup(full_path);
-            if (b->count >= BATCH_MAX) flush_batch(queue, b);
+            batch_add(queue, b, strdup(full_path));
         }
     }
 
@@ -140,11 +166,12 @@ static void walk_recursive_posix(const char *dirpath, greg_queue_t *queue, greg_
 int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_options_t *opts) {
     greg_ignore_stack_t ignore_stack;
     greg_ignore_stack_init(&ignore_stack);
-    
+
     walk_batch_t b = {0};
 
     struct stat st;
     if (stat(root_path, &st) != 0) {
+        fprintf(stderr, "greg: error: cannot access path: %s\n", root_path);
         greg_ignore_stack_destroy(&ignore_stack);
         return -1;
     }
@@ -153,7 +180,7 @@ int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_o
         walk_recursive_posix(root_path, queue, &ignore_stack, opts, &b);
     } else {
         if (!greg_ignore_stack_should_ignore(&ignore_stack, root_path, 0)) {
-            b.paths[b.count++] = strdup(root_path);
+            batch_add(queue, &b, strdup(root_path));
         }
     }
 
@@ -163,4 +190,3 @@ int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_o
 }
 
 #endif
-

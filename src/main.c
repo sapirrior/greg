@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 #include "types.h"
 #include "queue.h"
 #include "pool.h"
@@ -8,6 +9,7 @@
 #include "printer.h"
 #include "searcher.h"
 #include "walk.h"
+#include "version.h"
 
 #ifdef _WIN32
     #include <windows.h>
@@ -17,6 +19,8 @@
 #else
     #include <unistd.h>
 #endif
+
+#define GREG_MAX_THREADS 256
 
 // Portable helper to get CPU cores
 static int get_cpu_cores(void) {
@@ -46,7 +50,7 @@ static void pool_work_func(const char *filepath, pcre2_match_data *match_data, v
 }
 
 static void print_usage(const char *prog) {
-    printf("greg: A modern, high-performance text search utility in C.\n\n");
+    printf("greg %s: A modern, high-performance text search utility in C.\n\n", GREG_VERSION);
     printf("Usage:\n");
     printf("  %s [options] <pattern> [path]\n\n", prog);
     printf("Options:\n");
@@ -57,15 +61,41 @@ static void print_usage(const char *prog) {
     printf("  -n, --line-number          Always show line numbers (default if outputting to terminal).\n");
     printf("  -N, --no-line-number       Never show line numbers.\n");
     printf("  -l, --files-with-matches   Only print filenames of files containing matches.\n");
-    printf("  -j, --threads <num>        Number of threads to use (default: CPU core count).\n");
+    printf("  -j, --threads <num>        Number of threads to use (default: CPU core count, max %d).\n", GREG_MAX_THREADS);
     printf("  -a, --text                 Search binary files (do not skip them).\n");
     printf("      --heading              Group matches by file name (default on terminal).\n");
     printf("      --no-heading           Disable grouped matches.\n");
     printf("      --color <always|never> Control output coloring.\n");
     printf("  -h, --help                 Print this help message.\n");
+    printf("      --version              Print version information and exit.\n");
+}
+
+// Parses a positive integer thread count argument. Returns 0 and writes to
+// *out on success; on any parse failure (non-numeric, out of range,
+// trailing garbage) prints a clear error and returns -1, instead of
+// silently treating garbage input as 0 threads the way atoi() would.
+static int parse_thread_count(const char *arg, int *out) {
+    char *endptr = NULL;
+    long val = strtol(arg, &endptr, 10);
+    if (endptr == arg || *endptr != '\0' || val < 1 || val > GREG_MAX_THREADS) {
+        fprintf(stderr, "greg: error: --threads expects an integer between 1 and %d, got '%s'\n", GREG_MAX_THREADS, arg);
+        return -1;
+    }
+    *out = (int)val;
+    return 0;
 }
 
 int main(int argc, char **argv) {
+    // Use a larger fully-buffered stdout when not attached to a terminal
+    // (i.e. piped to a file or another process). This cuts the number of
+    // write() syscalls dramatically for large result sets. When attached to
+    // a terminal, leave stdio's default line-buffering behavior alone so
+    // output still appears promptly as the user watches it scroll.
+    static char stdout_buf[1 << 20]; // 1 MiB
+    if (!is_terminal_stdout()) {
+        setvbuf(stdout, stdout_buf, _IOFBF, sizeof(stdout_buf));
+    }
+
     greg_options_t opts;
     opts.case_insensitive = 0;
     opts.smart_case = 1;
@@ -83,7 +113,7 @@ int main(int argc, char **argv) {
     int parsed_positionals = 0;
 
     for (int i = 1; i < argc; i++) {
-        if (argv[i][0] == '-') {
+        if (argv[i][0] == '-' && argv[i][1] != '\0') {
             if (strcmp(argv[i], "-i") == 0 || strcmp(argv[i], "--ignore-case") == 0) {
                 opts.case_insensitive = 1;
             } else if (strcmp(argv[i], "-S") == 0 || strcmp(argv[i], "--smart-case") == 0) {
@@ -108,7 +138,9 @@ int main(int argc, char **argv) {
                 opts.search_binary = 1;
             } else if (strcmp(argv[i], "-j") == 0 || strcmp(argv[i], "--threads") == 0) {
                 if (i + 1 < argc) {
-                    num_threads = atoi(argv[++i]);
+                    if (parse_thread_count(argv[++i], &num_threads) != 0) {
+                        return 1;
+                    }
                 } else {
                     fprintf(stderr, "Error: --threads option requires an argument.\n");
                     return 1;
@@ -118,12 +150,19 @@ int main(int argc, char **argv) {
                     const char *color_opt = argv[++i];
                     if (strcmp(color_opt, "always") == 0) opts.color_enabled = 1;
                     else if (strcmp(color_opt, "never") == 0) opts.color_enabled = 0;
+                    else {
+                        fprintf(stderr, "Error: --color expects 'always' or 'never', got '%s'.\n", color_opt);
+                        return 1;
+                    }
                 } else {
                     fprintf(stderr, "Error: --color option requires an argument (always|never).\n");
                     return 1;
                 }
             } else if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
                 print_usage(argv[0]);
+                return 0;
+            } else if (strcmp(argv[i], "--version") == 0) {
+                printf("greg %s\n", GREG_VERSION);
                 return 0;
             } else {
                 fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -159,6 +198,7 @@ int main(int argc, char **argv) {
     // 2. Init printer
     greg_printer_t printer;
     if (greg_printer_init(&printer, opts.color_enabled, opts.show_line_numbers, opts.files_with_matches) != 0) {
+        fprintf(stderr, "greg: error: failed to initialize output printer\n");
         greg_matcher_destroy(&matcher);
         return 1;
     }
@@ -166,6 +206,7 @@ int main(int argc, char **argv) {
     // 3. Init queue
     greg_queue_t queue;
     if (greg_queue_init(&queue) != 0) {
+        fprintf(stderr, "greg: error: failed to initialize work queue\n");
         greg_printer_destroy(&printer);
         greg_matcher_destroy(&matcher);
         return 1;
@@ -175,6 +216,7 @@ int main(int argc, char **argv) {
     greg_worker_ctx_t ctx = { &matcher, &printer, &opts };
     greg_pool_t pool;
     if (greg_pool_init(&pool, num_threads, &queue, pool_work_func, &ctx) != 0) {
+        fprintf(stderr, "greg: error: failed to start worker thread pool\n");
         greg_queue_destroy(&queue);
         greg_printer_destroy(&printer);
         greg_matcher_destroy(&matcher);
@@ -189,7 +231,7 @@ int main(int argc, char **argv) {
 
     // 6. Signal completion to workers
     greg_queue_deactivate(&queue);
-    
+
     // 7. Join worker threads and clean up
     greg_pool_join(&pool);
     greg_pool_destroy(&pool);
@@ -198,6 +240,11 @@ int main(int argc, char **argv) {
     size_t total_matches = printer.match_count;
     greg_printer_destroy(&printer);
     greg_matcher_destroy(&matcher);
+
+    // Flush explicitly: with full buffering enabled above, output is only
+    // guaranteed to reach the pipe/file on a clean fflush, not just at
+    // normal process exit timing if something downstream is also buffering.
+    fflush(stdout);
 
     if (walk_rc != 0) {
         return 1;
@@ -213,4 +260,3 @@ int main(int argc, char **argv) {
 
     return 0;
 }
-
