@@ -5,19 +5,12 @@
 static GREG_THREAD_ROUTINE worker_thread_routine(void *arg) {
     greg_pool_t *pool = (greg_pool_t *)arg;
     
-    // Cast user data to retrieve matcher structure for match context creation
-    // To cleanly access the matcher, we inspect pool->user_data. Let's do that dynamically.
-    // The user_data is struct: { greg_matcher_t *matcher; greg_printer_t *printer; const greg_options_t *opts; }
-    typedef struct {
-        greg_matcher_t *matcher;
-        void *dummy1;
-        void *dummy2;
-    } temp_ctx_t;
-    temp_ctx_t *temp = (temp_ctx_t *)pool->user_data;
+    // Safely cast user data to retrieve matcher structure for match context creation
+    greg_worker_ctx_t *ctx = (greg_worker_ctx_t *)pool->user_data;
 
     pcre2_match_data *match_data = NULL;
-    if (temp && temp->matcher && temp->matcher->code) {
-        match_data = pcre2_match_data_create_from_pattern(temp->matcher->code, NULL);
+    if (ctx && ctx->matcher && ctx->matcher->code) {
+        match_data = pcre2_match_data_create_from_pattern(ctx->matcher->code, NULL);
     }
 
     char *batch[16];
@@ -76,3 +69,4 @@ void greg_pool_destroy(greg_pool_t *pool) {
         pool->threads = NULL;
     }
 }
+

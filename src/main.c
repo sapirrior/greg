@@ -39,13 +39,6 @@ static int is_terminal_stdout(void) {
     return isatty(fileno(stdout));
 }
 
-// Shared worker context for the thread pool
-typedef struct {
-    greg_matcher_t *matcher;
-    greg_printer_t *printer;
-    const greg_options_t *opts;
-} greg_worker_ctx_t;
-
 // Thread pool work function
 static void pool_work_func(const char *filepath, pcre2_match_data *match_data, void *user_data) {
     greg_worker_ctx_t *ctx = (greg_worker_ctx_t *)user_data;
@@ -196,7 +189,7 @@ int main(int argc, char **argv) {
 
     // 6. Signal completion to workers
     greg_queue_deactivate(&queue);
-
+    
     // 7. Join worker threads and clean up
     greg_pool_join(&pool);
     greg_pool_destroy(&pool);
@@ -220,3 +213,4 @@ int main(int argc, char **argv) {
 
     return 0;
 }
+
