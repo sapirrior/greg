@@ -5,18 +5,30 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
+#define BATCH_MAX 64
+
+typedef struct {
+    char *paths[BATCH_MAX];
+    int count;
+} walk_batch_t;
+
+static void flush_batch(greg_queue_t *queue, walk_batch_t *b) {
+    if (b->count > 0) {
+        greg_queue_push_batch(queue, b->paths, b->count);
+        b->count = 0;
+    }
+}
+
 #ifdef _WIN32
 #include <windows.h>
 
-static void walk_recursive_win(const char *dirpath, greg_queue_t *queue, greg_ignore_stack_t *ignore_stack, const greg_options_t *opts) {
+static void walk_recursive_win(const char *dirpath, greg_queue_t *queue, greg_ignore_stack_t *ignore_stack, const greg_options_t *opts, walk_batch_t *b) {
     greg_ignore_stack_push(ignore_stack, dirpath);
-
     char search_path[2048];
     snprintf(search_path, sizeof(search_path), "%s\\*", dirpath);
 
     WIN32_FIND_DATAA find_data;
     HANDLE hFind = FindFirstFileA(search_path, &find_data);
-
     if (hFind == INVALID_HANDLE_VALUE) {
         greg_ignore_stack_pop(ignore_stack);
         return;
@@ -29,17 +41,16 @@ static void walk_recursive_win(const char *dirpath, greg_queue_t *queue, greg_ig
 
         char full_path[2048];
         snprintf(full_path, sizeof(full_path), "%s\\%s", dirpath, find_data.cFileName);
-
         int is_dir = (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? 1 : 0;
-
         if (greg_ignore_stack_should_ignore(ignore_stack, full_path, is_dir)) {
             continue;
         }
 
         if (is_dir) {
-            walk_recursive_win(full_path, queue, ignore_stack, opts);
+            walk_recursive_win(full_path, queue, ignore_stack, opts, b);
         } else {
-            greg_queue_push(queue, full_path);
+            b->paths[b->count++] = strdup(full_path);
+            if (b->count >= BATCH_MAX) flush_batch(queue, b);
         }
     } while (FindNextFileA(hFind, &find_data));
 
@@ -50,6 +61,8 @@ static void walk_recursive_win(const char *dirpath, greg_queue_t *queue, greg_ig
 int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_options_t *opts) {
     greg_ignore_stack_t ignore_stack;
     greg_ignore_stack_init(&ignore_stack);
+    
+    walk_batch_t b = {0};
 
     DWORD attrs = GetFileAttributesA(root_path);
     if (attrs == INVALID_FILE_ATTRIBUTES) {
@@ -58,14 +71,14 @@ int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_o
     }
 
     if (attrs & FILE_ATTRIBUTE_DIRECTORY) {
-        walk_recursive_win(root_path, queue, &ignore_stack, opts);
+        walk_recursive_win(root_path, queue, &ignore_stack, opts, &b);
     } else {
-        // It's a single file, check ignores first
         if (!greg_ignore_stack_should_ignore(&ignore_stack, root_path, 0)) {
-            greg_queue_push(queue, root_path);
+            b.paths[b.count++] = strdup(root_path);
         }
     }
 
+    flush_batch(queue, &b);
     greg_ignore_stack_destroy(&ignore_stack);
     return 0;
 }
@@ -74,9 +87,8 @@ int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_o
 
 #include <dirent.h>
 
-static void walk_recursive_posix(const char *dirpath, greg_queue_t *queue, greg_ignore_stack_t *ignore_stack, const greg_options_t *opts) {
+static void walk_recursive_posix(const char *dirpath, greg_queue_t *queue, greg_ignore_stack_t *ignore_stack, const greg_options_t *opts, walk_batch_t *b) {
     greg_ignore_stack_push(ignore_stack, dirpath);
-
     DIR *dir = opendir(dirpath);
     if (!dir) {
         greg_ignore_stack_pop(ignore_stack);
@@ -114,9 +126,10 @@ static void walk_recursive_posix(const char *dirpath, greg_queue_t *queue, greg_
         }
 
         if (is_dir) {
-            walk_recursive_posix(full_path, queue, ignore_stack, opts);
+            walk_recursive_posix(full_path, queue, ignore_stack, opts, b);
         } else {
-            greg_queue_push(queue, full_path);
+            b->paths[b->count++] = strdup(full_path);
+            if (b->count >= BATCH_MAX) flush_batch(queue, b);
         }
     }
 
@@ -127,6 +140,8 @@ static void walk_recursive_posix(const char *dirpath, greg_queue_t *queue, greg_
 int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_options_t *opts) {
     greg_ignore_stack_t ignore_stack;
     greg_ignore_stack_init(&ignore_stack);
+    
+    walk_batch_t b = {0};
 
     struct stat st;
     if (stat(root_path, &st) != 0) {
@@ -135,16 +150,17 @@ int greg_walk_directory(const char *root_path, greg_queue_t *queue, const greg_o
     }
 
     if (S_ISDIR(st.st_mode)) {
-        walk_recursive_posix(root_path, queue, &ignore_stack, opts);
+        walk_recursive_posix(root_path, queue, &ignore_stack, opts, &b);
     } else {
-        // It's a single file
         if (!greg_ignore_stack_should_ignore(&ignore_stack, root_path, 0)) {
-            greg_queue_push(queue, root_path);
+            b.paths[b.count++] = strdup(root_path);
         }
     }
 
+    flush_batch(queue, &b);
     greg_ignore_stack_destroy(&ignore_stack);
     return 0;
 }
 
 #endif
+

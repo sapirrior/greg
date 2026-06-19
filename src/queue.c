@@ -30,15 +30,13 @@ void greg_queue_destroy(greg_queue_t *q) {
     greg_cond_destroy(&q->cond);
 }
 
-int greg_queue_push(greg_queue_t *q, const char *filepath) {
+int greg_queue_push(greg_queue_t *q, char *filepath) {
     greg_queue_node_t *node = malloc(sizeof(greg_queue_node_t));
-    if (!node) return -1;
-
-    node->filepath = strdup(filepath);
-    if (!node->filepath) {
-        free(node);
+    if (!node) {
+        free(filepath);
         return -1;
     }
+    node->filepath = filepath;
     node->next = NULL;
 
     greg_mutex_lock(&q->mutex);
@@ -57,6 +55,50 @@ int greg_queue_push(greg_queue_t *q, const char *filepath) {
     }
 
     greg_cond_signal(&q->cond);
+    greg_mutex_unlock(&q->mutex);
+    return 0;
+}
+
+int greg_queue_push_batch(greg_queue_t *q, char **filepaths, int count) {
+    if (count == 0) return 0;
+    
+    greg_queue_node_t *first = NULL, *last = NULL;
+    for (int i = 0; i < count; i++) {
+        greg_queue_node_t *node = malloc(sizeof(greg_queue_node_t));
+        if (!node) { 
+            free(filepaths[i]); 
+            continue; 
+        }
+        node->filepath = filepaths[i];
+        node->next = NULL;
+        if (!first) first = node;
+        else last->next = node;
+        last = node;
+    }
+    if (!first) return -1;
+
+    greg_mutex_lock(&q->mutex);
+    if (!q->active) {
+        greg_queue_node_t *curr = first;
+        while (curr) {
+            greg_queue_node_t *next = curr->next;
+            free(curr->filepath);
+            free(curr);
+            curr = next;
+        }
+        greg_mutex_unlock(&q->mutex);
+        return -1;
+    }
+
+    if (q->tail) {
+        q->tail->next = first;
+        q->tail = last;
+    } else {
+        q->head = first;
+        q->tail = last;
+    }
+
+    greg_cond_broadcast(&q->cond);
     greg_mutex_unlock(&q->mutex);
     return 0;
 }
@@ -117,3 +159,4 @@ void greg_queue_deactivate(greg_queue_t *q) {
     greg_cond_broadcast(&q->cond); 
     greg_mutex_unlock(&q->mutex);
 }
+

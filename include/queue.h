@@ -18,9 +18,16 @@ typedef struct {
 
 int greg_queue_init(greg_queue_t *q);
 void greg_queue_destroy(greg_queue_t *q);
-int greg_queue_push(greg_queue_t *q, const char *filepath);
+
+// Takes ownership of dynamically allocated string
+int greg_queue_push(greg_queue_t *q, char *filepath);
+
+// Pushes an entire batch (takes ownership of strings inside the array)
+int greg_queue_push_batch(greg_queue_t *q, char **filepaths, int count);
+
 char *greg_queue_pop(greg_queue_t *q);
 int greg_queue_pop_batch(greg_queue_t *q, char **out_filepaths, int max_batch);
 void greg_queue_deactivate(greg_queue_t *q);
 
 #endif // GREG_QUEUE_H
+
