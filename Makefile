@@ -11,7 +11,15 @@ SRC_DIR := src
 INC_DIR := include
 OBJ_DIR := obj
 
-VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || cat VERSION 2>/dev/null || echo 0.0.0-unknown)
+BASE_VERSION := $(shell cat VERSION 2>/dev/null || echo 0.0.0)
+GIT_SUFFIX   := $(shell git describe --always --dirty 2>/dev/null | grep -v '^[0-9]' 2>/dev/null || (git diff --quiet 2>/dev/null || echo "dirty"))
+ifeq ($(GIT_SUFFIX),dirty)
+    VERSION := $(BASE_VERSION)-dirty
+else ifneq ($(GIT_SUFFIX),)
+    VERSION := $(BASE_VERSION)-$(GIT_SUFFIX)
+else
+    VERSION := $(BASE_VERSION)
+endif
 
 # --- Warnings & correctness -------------------------------------------------
 WARN_FLAGS := -Wall -Wextra -Wpedantic -Wshadow -Wformat=2 -Wstrict-prototypes -Wundef

@@ -27,9 +27,10 @@ Average execution times show that `greg` achieves processing speeds comparable t
 - **PCRE2 JIT** — full regex with JIT compilation, same engine as ripgrep
 - **Smart-case** — case-insensitive when pattern is all lowercase (like ripgrep)
 - **Slab-allocated queue** — zero per-file `malloc`/`free` overhead in the hot path
-- **gitignore support** — respects `.gitignore` and `.ignore` files with a lock-free, reference-counted ignore tree
+- **gitignore support** — respects `.gitignore` and `.ignore` files with a lock-free, reference-counted ignore tree supporting standard `*` and multi-level `**` wildcards matched iteratively
 - **mmap file reading** — memory-mapped I/O with `MADV_SEQUENTIAL` for large files
-- **Buffered output** — 1 MiB stdout buffer, single `fwrite` per file result under mutex
+- **Buffered output** — 1 MiB stdout buffer, single `fwrite` per file result under mutex, printing no trailing newlines/blank space at the end of the results
+- **JIT compilation** — uses the compiled JIT execution path (`pcre2_jit_match`) for maximum throughput
 
 ---
 
@@ -75,7 +76,7 @@ greg [options] <pattern> [path]
 | `-m NUM` | `--max-count NUM` | Stop after NUM matches per file |
 | `-j NUM` | `--threads NUM` | Number of worker threads *(default: CPU cores)* |
 | `-a` | `--text` | Search binary files |
-| | `--raw` | Machine-readable output format |
+| | `--raw` | Machine-readable output format (`<filepath>\n<line_num>:<match_start>:<match_end>\n` using 1-based line numbers) |
 | | `--no-ignore` | Ignore `.gitignore` / `.ignore` rules |
 | | `--follow` | Follow symbolic links |
 | | `--hidden` | Search hidden files and directories |
@@ -123,6 +124,7 @@ worker threads (N = CPU cores)
 Key design decisions:
 - **Slab allocator** for queue nodes — 256 nodes per slab, recycled via free-list; no per-item `malloc`
 - **Reference-counted ignore tree** — parent ignore contexts shared across threads with atomic refcount, no copies
+- **Iterative Wildcard Matcher** — safe backtrack-based iterative glob wildcard matching (supporting `*` and `**`), preventing stack overflows on complex nested directory patterns
 - **Task tracking** in queue — automatic termination when `active_tasks` reaches zero; no explicit "deactivate" signal needed for the normal path
 
 ---

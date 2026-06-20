@@ -80,7 +80,7 @@ void greg_matcher_destroy(greg_matcher_t *matcher) {
 }
 
 int greg_matcher_find(greg_matcher_t *matcher, pcre2_match_data *match_data, const char *subject, size_t length, size_t start_offset, size_t *start_out, size_t *end_out) {
-    int rc = pcre2_match(
+    int rc = pcre2_jit_match(
         matcher->code,
         (PCRE2_SPTR)subject,
         length,

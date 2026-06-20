@@ -229,7 +229,7 @@ int greg_search_file(const char *filepath, greg_matcher_t *matcher, pcre2_match_
                 }
                 outbuf_append_str(&ob, "  ");
                 outbuf_append_size(&ob, (size_t)match_count);
-                outbuf_append_str(&ob, "\n\n");
+                outbuf_append_str(&ob, "\n");
             } else {
                 if (printer->color_enabled) {
                     outbuf_append_str(&ob, ANSI_FILEPATH);
@@ -263,14 +263,13 @@ int greg_search_file(const char *filepath, greg_matcher_t *matcher, pcre2_match_
                 outbuf_append_str(&ob, filepath);
                 outbuf_append_str(&ob, "\n");
                 for (int i = 0; i < match_count; i++) {
-                    outbuf_append_size(&ob, matches[i].line_num - 1);
+                    outbuf_append_size(&ob, matches[i].line_num);
                     outbuf_append_str(&ob, ":");
                     outbuf_append_size(&ob, matches[i].match_start);
                     outbuf_append_str(&ob, ":");
-                    outbuf_append_size(&ob, matches[i].match_end - 1);
+                    outbuf_append_size(&ob, matches[i].match_end);
                     outbuf_append_str(&ob, "\n");
                 }
-                outbuf_append_str(&ob, "\n");
             } else if (opts->heading) {
                 if (printer->color_enabled) {
                     outbuf_append_str(&ob, ANSI_FILEPATH);
@@ -297,7 +296,6 @@ int greg_search_file(const char *filepath, greg_matcher_t *matcher, pcre2_match_
                     }
                     outbuf_append_line_highlighted(&ob, printer->color_enabled, matches[i].line_start, matches[i].line_len, matches[i].match_start, matches[i].match_end);
                 }
-                outbuf_append(&ob, "\n", 1);
             } else {
                 for (int i = 0; i < match_count; i++) {
                     if (printer->color_enabled) {
